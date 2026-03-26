@@ -1,0 +1,4 @@
+build/
+build_7zip/
+py7zip/
+py7zip.egg-info/
