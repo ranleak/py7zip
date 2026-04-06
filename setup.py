@@ -24,29 +24,43 @@ class Build7ZipCommand(build_py):
         # 1. Clone the repository
         if not (build_dir / ".git").exists():
             print(f"[*] Cloning {REPO_URL} into {build_dir}...")
-            subprocess.check_call(["git", "clone", REPO_URL, str(build_dir)])
+            try:
+                subprocess.check_call(["git", "clone", REPO_URL, str(build_dir)])
+            except subprocess.CalledProcessError:
+                raise RuntimeError("Failed to clone the 7-Zip repository. Is git installed?")
         else:
             print("[*] Repository already cloned. Pulling latest changes...")
-            subprocess.check_call(["git", "pull"], cwd=str(build_dir))
+            try:
+                subprocess.check_call(["git", "pull"], cwd=str(build_dir))
+            except subprocess.CalledProcessError:
+                print("[!] Warning: Could not pull latest changes. Proceeding with existing source.")
             
         # 2. Compile 7-Zip standalone (7zz)
         print("[*] Compiling 7-Zip source code...")
         # The Alone2 bundle creates the fully-featured standalone console tool
         make_dir = build_dir / "CPP" / "7zip" / "Bundles" / "Alone2"
         
-        if sys.platform == "win32":
-            # Windows compilation requires MSVC & nmake
-            subprocess.check_call(["nmake", "NEW_COMPILER=1", "MY_STATIC_LINK=1"], cwd=str(make_dir))
-            binary_name = "7zz.exe"
-            compiled_bin = make_dir / "O" / binary_name
-        else:
-            # Linux/macOS compilation (requires make and g++)
-            subprocess.check_call(["make", "-j4", "-f", "makefile.gcc"], cwd=str(make_dir))
-            binary_name = "7zz"
-            compiled_bin = make_dir / "_o" / binary_name
+        if not make_dir.exists():
+            raise FileNotFoundError(f"Source directory not found: {make_dir}")
+
+        try:
+            if sys.platform == "win32":
+                # Windows compilation requires MSVC & nmake
+                print("[*] Running nmake for Windows...")
+                subprocess.check_call(["nmake", "NEW_COMPILER=1", "MY_STATIC_LINK=1"], cwd=str(make_dir))
+                binary_name = "7zz.exe"
+                compiled_bin = make_dir / "O" / binary_name
+            else:
+                # Linux/macOS compilation (requires make and g++)
+                print("[*] Running make for Linux/macOS...")
+                subprocess.check_call(["make", "-j4", "-f", "makefile.gcc"], cwd=str(make_dir))
+                binary_name = "7zz"
+                compiled_bin = make_dir / "_o" / binary_name
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Compilation failed (exit code {e.returncode}). Ensure 'make'/'g++' (Linux/macOS) or 'nmake' (Windows) is installed.")
             
         if not compiled_bin.exists():
-            raise FileNotFoundError(f"Compilation failed. Binary not found at {compiled_bin}")
+            raise FileNotFoundError(f"Compilation seemingly succeeded, but binary not found at {compiled_bin}")
             
         # 3. Copy compiled binary into the Python package structure
         print(f"[*] Copying compiled binary to {bin_dir}...")
@@ -101,6 +115,13 @@ _default_instance = SevenZip()
 extract = _default_instance.extract
 compress = _default_instance.compress
 '''
+
+
+# --- CRITICAL FIX ---
+# Pre-create the target package directory so 'pip' and 'egg_info' 
+# can generate metadata successfully before the build_py step is run.
+Path("py7zip").mkdir(exist_ok=True)
+
 
 setup(
     name="py7zip",
